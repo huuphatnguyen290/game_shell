@@ -1,4 +1,4 @@
-"""Integration tests for the shell's observable startup and input behavior."""
+"""Tests for the shell's observable startup, input, and built-in behavior."""
 
 from pathlib import Path
 import subprocess
@@ -19,7 +19,7 @@ class ShellFoundationTests(unittest.TestCase):
         self.repository = self.root / "games"
         self.repository.mkdir()
 
-    def run_shell(self, arguments=None, commands="exit\n"):
+    def run_shell(self, arguments=None, commands="exit\n", cwd=None):
         if arguments is None:
             arguments = [str(self.repository)]
         # A timeout detects an EOF loop or a failure to recognize exit.
@@ -28,6 +28,7 @@ class ShellFoundationTests(unittest.TestCase):
             input=commands,
             capture_output=True,
             text=True,
+            cwd=cwd,
             timeout=5,
         )
 
@@ -117,6 +118,121 @@ class ShellFoundationTests(unittest.TestCase):
 
     def test_exit_does_not_process_following_lines(self):
         self.assert_result(self.run_shell(commands="exit\nhelp\n"), 0, PROMPT, "")
+
+    def test_path_accepts_an_existing_directory(self):
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        self.assert_result(
+            self.run_shell(commands=f"path {replacement}\nexit\n"),
+            0,
+            PROMPT * 2,
+            "",
+        )
+
+    def test_path_requires_exactly_one_argument(self):
+        for command in ["path", f"path {self.repository} {self.repository}"]:
+            with self.subTest(command=command):
+                self.assert_result(
+                    self.run_shell(commands=command + "\nexit\n"),
+                    0,
+                    PROMPT * 2,
+                    ERROR,
+                )
+
+    def test_path_rejects_non_directory_targets(self):
+        regular_file = self.root / "file.txt"
+        regular_file.write_text("not a directory\n")
+        for target in [regular_file, self.root / "missing"]:
+            with self.subTest(target=target):
+                self.assert_result(
+                    self.run_shell(commands=f"path {target}\nexit\n"),
+                    0,
+                    PROMPT * 2,
+                    ERROR,
+                )
+
+    def test_path_accepts_surrounding_spaces_and_tabs(self):
+        self.assert_result(
+            self.run_shell(commands=f" \tpath\t {self.repository} \t\nexit\n"),
+            0,
+            PROMPT * 2,
+            "",
+        )
+
+    def test_path_accepts_a_relative_directory(self):
+        self.assert_result(
+            self.run_shell(commands="path games\nexit\n", cwd=self.root),
+            0,
+            PROMPT * 2,
+            "",
+        )
+
+    def test_path_accepts_a_trailing_slash(self):
+        self.assert_result(
+            self.run_shell(commands=f"path {self.repository}/\nexit\n"),
+            0,
+            PROMPT * 2,
+            "",
+        )
+
+    def test_path_can_change_repositories_repeatedly(self):
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        self.assert_result(
+            self.run_shell(
+                commands=f"path {replacement}\npath {self.repository}\nexit\n"
+            ),
+            0,
+            PROMPT * 3,
+            "",
+        )
+
+    def test_valid_path_command_recovers_after_invalid_target(self):
+        self.assert_result(
+            self.run_shell(
+                commands=f"path {self.root / 'missing'}\npath {self.repository}\nexit\n"
+            ),
+            0,
+            PROMPT * 3,
+            ERROR,
+        )
+
+    def test_eof_after_path_change(self):
+        self.assert_result(
+            self.run_shell(commands=f"path {self.repository}\n"),
+            0,
+            PROMPT * 2,
+            "",
+        )
+
+    def test_path_owns_its_storage_and_preserves_state_on_failure(self):
+        # No game execution exists yet, so exercise repository state directly.
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        regular_file = self.root / "file.txt"
+        regular_file.write_text("not a directory\n")
+        executable = self.root / "test_repository_path"
+        source = Path(__file__).with_name("test_repository_path.c")
+        build = subprocess.run(
+            [
+                "gcc", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror",
+                str(source), "-o", str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
+        result = subprocess.run(
+            [
+                str(executable), str(self.repository), str(replacement),
+                str(regular_file), str(self.root / "missing"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assert_result(result, 0, "", "")
 
     def test_prompt_is_flushed_before_input_is_available(self):
         import os

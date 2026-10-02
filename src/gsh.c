@@ -2,7 +2,7 @@
  * Date: 2026-10-02
  * Name and NetID: to be supplied by the author before submission.
  * Description: An interactive shell for a user-selected game repository.
- * This increment validates startup and implements command input and exit.
+ * Supports command input, exit, and repository path changes.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -33,6 +33,24 @@ static int is_directory(const char *path)
     return stat(path, &information) == 0 && S_ISDIR(information.st_mode);
 }
 
+/* Preserve the current repository unless validation and allocation succeed. */
+static int change_repository(char **repository_path, const char *new_path)
+{
+    char *replacement;
+
+    if (!is_directory(new_path)) {
+        return -1;
+    }
+    replacement = strdup(new_path);
+    if (replacement == NULL) {
+        return -1;
+    }
+
+    free(*repository_path);
+    *repository_path = replacement;
+    return 0;
+}
+
 /* Tokens borrow storage from line; the resulting array can later feed execvp(). */
 static size_t parse_arguments(char *line, char **arguments)
 {
@@ -56,12 +74,20 @@ static size_t parse_arguments(char *line, char **arguments)
 
 int main(int argc, char **argv)
 {
+    char *repository_path;
     char *line = NULL;
     size_t capacity = 0;
     int result = EXIT_SUCCESS;
 
     /* Invalid invocation must fail before the first prompt appears. */
     if (argc != 2 || !is_directory(argv[1])) {
+        report_error();
+        exit(EXIT_FAILURE);
+    }
+
+    /* Own the path separately from argv and the reusable command-line buffer. */
+    repository_path = strdup(argv[1]);
+    if (repository_path == NULL) {
         report_error();
         exit(EXIT_FAILURE);
     }
@@ -101,13 +127,23 @@ int main(int argc, char **argv)
                 continue;
             }
             free(line);
+            free(repository_path);
             exit(EXIT_SUCCESS);
         }
 
-        /* Later tasks add repository built-ins and game execution here. */
+        if (strcmp(arguments[0], "path") == 0) {
+            if (argument_count != 2 ||
+                change_repository(&repository_path, arguments[1]) != 0) {
+                report_error();
+            }
+            continue;
+        }
+
+        /* Later tasks add repository listing and game execution here. */
         report_error();
     }
 
     free(line);
+    free(repository_path);
     return result;
 }
