@@ -25,6 +25,12 @@ repository, for example `sudoku --help`. The shell waits for the game to finish
 before prompting again. Games can read moves from standard input. Missing or
 non-executable games print the shell error, and the shell continues.
 
+Replay moves from a file with `tictactoe --seed 0 < /path/to/moves.txt`.
+The `<` operator must be separated by whitespace and followed by exactly one
+filename. Invalid syntax or an unreadable file prints the shell error without
+starting the game. After the game finishes, the shell reads its next command
+from its original standard input.
+
 Use `ls` to list repository files in lexical order as `filename: description`.
 Descriptions come from each file's `--help` output, captured in a temporary file.
 Empty or failed help uses `(empty)`. Hidden files are included, directories are
@@ -57,11 +63,10 @@ under `docs/`, which is excluded from Git.
 | 1 | `task/01-shell-foundation` | Startup checks, prompt, parsing, `exit`, EOF | Complete |
 | 2 | `task/02-repository-path` | `path` built-in | Complete |
 | 3 | `task/03-game-execution` | Run games and wait for completion | Complete |
-| 4 | `task/04-game-listing` | Sorted `ls` with captured help descriptions | Complete; awaiting review |
-| 5 | `task/05-input-redirection` | `<` parsing and game stdin redirection | Pending |
+| 4 | `task/04-game-listing` | Sorted `ls` with captured help descriptions | Complete |
+| 5 | `task/05-input-redirection` | `<` parsing and game stdin redirection | Complete; awaiting review |
 | 6 | `task/06-submission-packaging` | Final verification, author header, `gsh.zip` | Pending |
 
-The `<` input redirection operator is scheduled for Task 5.
 The author's Name and NetID will be added to the source header before submission.
 
 Task 1 verification: all 16 integration tests passed in an Ubuntu 22.04
@@ -77,3 +82,7 @@ waiting for games, and both queued and interactive game input.
 Task 4 verification: all 56 tests passed in the same GCC 11.4.0 environment.
 Listing tests cover sorting, hidden files, file links, failed/empty help, newline
 formatting, large descriptions, shell input isolation, and descriptor cleanup.
+
+Task 5 verification: all 70 tests passed with GCC 11.4.0 and warnings treated as
+errors. Redirection tests cover replay contents and arguments, syntax rejection,
+unreadable files, preserved shell input, and descriptor cleanup on execution errors.
