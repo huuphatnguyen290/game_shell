@@ -1,0 +1,6 @@
+/src/gsh
+/src/*.o
+/gsh.zip
+/game_shell_specification.md
+/docs/
+__pycache__/
