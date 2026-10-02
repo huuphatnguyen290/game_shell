@@ -20,6 +20,11 @@ Use `path /new/path/to/games` to replace the game repository. It requires exactl
 one existing directory; invalid arguments print the specified error and preserve
 the current repository. Spaces and tabs around the command are accepted.
 
+Type a game's filename followed by its arguments to execute it from the selected
+repository, for example `sudoku --help`. The shell waits for the game to finish
+before prompting again. Games can read moves from standard input. Missing or
+non-executable games print the shell error, and the shell continues.
+
 ## Tests
 
 Development tests require Python 3 on Linux; the shell itself requires only C.
@@ -45,13 +50,13 @@ under `docs/`, which is excluded from Git.
 | Task | Branch | Scope | Status |
 | --- | --- | --- | --- |
 | 1 | `task/01-shell-foundation` | Startup checks, prompt, parsing, `exit`, EOF | Complete |
-| 2 | `task/02-repository-path` | `path` built-in | Complete; awaiting review |
-| 3 | `task/03-game-execution` | Run games and wait for completion | Pending |
+| 2 | `task/02-repository-path` | `path` built-in | Complete |
+| 3 | `task/03-game-execution` | Run games and wait for completion | Complete; awaiting review |
 | 4 | `task/04-game-listing` | Sorted `ls` with captured help descriptions | Pending |
 | 5 | `task/05-input-redirection` | `<` parsing and game stdin redirection | Pending |
 | 6 | `task/06-submission-packaging` | Final verification, author header, `gsh.zip` | Pending |
 
-At Task 2, all commands besides `exit` and `path` report `An error has occurred`.
+The `ls` built-in and `<` input redirection are scheduled for Tasks 4 and 5.
 The author's Name and NetID will be added to the source header before submission.
 
 Task 1 verification: all 16 integration tests passed in an Ubuntu 22.04
@@ -59,3 +64,7 @@ container using GCC 11.4.0 with `-Wall -Wextra -Wpedantic -Werror`.
 
 Task 2 verification: all 26 tests passed in the same Linux environment, including
 a C test of repository ownership and preservation after invalid path changes.
+
+Task 3 verification: all 40 tests passed with GCC 11.4.0 and warnings treated as
+errors. Execution tests cover arguments, repository selection, error recovery,
+waiting for games, and both queued and interactive game input.

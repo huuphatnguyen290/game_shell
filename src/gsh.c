@@ -2,15 +2,17 @@
  * Date: 2026-10-02
  * Name and NetID: to be supplied by the author before submission.
  * Description: An interactive shell for a user-selected game repository.
- * Supports command input, exit, and repository path changes.
+ * Supports command input, exit, repository path changes, and game execution.
  */
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* Enough slots for every token in a specified 255-character command and NULL. */
@@ -72,6 +74,48 @@ static size_t parse_arguments(char *line, char **arguments)
     return count;
 }
 
+/* A signal interrupting waitpid() must not let the next command run early. */
+static int wait_for_child(pid_t child, int *status)
+{
+    pid_t waited;
+
+    do {
+        waited = waitpid(child, status, 0);
+    } while (waited == -1 && errno == EINTR);
+
+    return waited == child ? 0 : -1;
+}
+
+/* Run the named game from the current repository and wait for its completion. */
+static void run_game(const char *repository_path, char **arguments)
+{
+    size_t path_length = strlen(repository_path) + strlen(arguments[0]) + 2;
+    char *game_path = malloc(path_length);
+    pid_t child;
+    int status;
+
+    if (game_path == NULL) {
+        report_error();
+        return;
+    }
+    snprintf(game_path, path_length, "%s/%s", repository_path, arguments[0]);
+
+    child = fork();
+    if (child == -1) {
+        report_error();
+    } else if (child == 0) {
+        execvp(game_path, arguments);
+        /* execvp() only returns on failure; do not flush inherited stdout. */
+        report_error();
+        _exit(EXIT_FAILURE);
+    } else if (wait_for_child(child, &status) == -1) {
+        report_error();
+    }
+
+    /* A game's own failure status is not a shell syntax or execution error. */
+    free(game_path);
+}
+
 int main(int argc, char **argv)
 {
     char *repository_path;
@@ -89,6 +133,13 @@ int main(int argc, char **argv)
     repository_path = strdup(argv[1]);
     if (repository_path == NULL) {
         report_error();
+        exit(EXIT_FAILURE);
+    }
+
+    /* Leave unread game moves on the shared stdin descriptor for the child. */
+    if (setvbuf(stdin, NULL, _IONBF, 0) != 0) {
+        report_error();
+        free(repository_path);
         exit(EXIT_FAILURE);
     }
 
@@ -139,8 +190,7 @@ int main(int argc, char **argv)
             continue;
         }
 
-        /* Later tasks add repository listing and game execution here. */
-        report_error();
+        run_game(repository_path, arguments);
     }
 
     free(line);

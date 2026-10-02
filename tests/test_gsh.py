@@ -206,7 +206,7 @@ class ShellFoundationTests(unittest.TestCase):
         )
 
     def test_path_owns_its_storage_and_preserves_state_on_failure(self):
-        # No game execution exists yet, so exercise repository state directly.
+        # Exercise ownership and aliased inputs directly, beyond CLI coverage.
         replacement = self.root / "replacement"
         replacement.mkdir()
         regular_file = self.root / "file.txt"
