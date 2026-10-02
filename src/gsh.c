@@ -2,7 +2,7 @@
  * Date: 2026-10-02
  * Name and NetID: to be supplied by the author before submission.
  * Description: An interactive shell for a user-selected game repository.
- * Supports exit, path, sorted game listings, and game execution.
+ * Supports exit, path, sorted listings, and games with stdin redirection.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -76,6 +76,32 @@ static size_t parse_arguments(char *line, char **arguments)
     return count;
 }
 
+/* Accept one separated '<' followed by one filename, excluding it from argv. */
+static int parse_redirection(char **arguments, size_t count, const char **input_path)
+{
+    size_t operator_index = count;
+
+    *input_path = NULL;
+    for (size_t index = 0; index < count; ++index) {
+        if (strcmp(arguments[index], "<") == 0) {
+            if (operator_index != count) {
+                return -1;
+            }
+            operator_index = index;
+        }
+    }
+    if (operator_index == count) {
+        return 0;
+    }
+    if (operator_index == 0 || operator_index + 2 != count) {
+        return -1;
+    }
+
+    *input_path = arguments[operator_index + 1];
+    arguments[operator_index] = NULL;
+    return 0;
+}
+
 /* A signal interrupting waitpid() must not let the next command run early. */
 static int wait_for_child(pid_t child, int *status)
 {
@@ -101,9 +127,10 @@ static char *join_repository_path(const char *repository_path, const char *name)
 }
 
 /* Run the named game from the current repository and wait for its completion. */
-static void run_game(const char *repository_path, char **arguments)
+static void run_game(const char *repository_path, char **arguments, const char *input_path)
 {
     char *game_path = join_repository_path(repository_path, arguments[0]);
+    int input_descriptor = -1;
     pid_t child;
     int status;
 
@@ -111,15 +138,38 @@ static void run_game(const char *repository_path, char **arguments)
         report_error();
         return;
     }
+    /* Open in the parent so an unreadable replay never starts the game. */
+    if (input_path != NULL) {
+        input_descriptor = open(input_path, O_RDONLY);
+        if (input_descriptor == -1) {
+            report_error();
+            free(game_path);
+            return;
+        }
+    }
+
     child = fork();
-    if (child == -1) {
-        report_error();
-    } else if (child == 0) {
+    if (child == 0) {
+        if (input_descriptor != -1) {
+            if (dup2(input_descriptor, STDIN_FILENO) == -1) {
+                report_error();
+                _exit(EXIT_FAILURE);
+            }
+            if (input_descriptor != STDIN_FILENO) {
+                close(input_descriptor);
+            }
+        }
         execvp(game_path, arguments);
         /* execvp() only returns on failure; do not flush inherited stdout. */
         report_error();
         _exit(EXIT_FAILURE);
-    } else if (wait_for_child(child, &status) == -1) {
+    }
+
+    /* The parent retains its stdin and releases the replay fd even if fork fails. */
+    if (input_descriptor != -1) {
+        close(input_descriptor);
+    }
+    if (child == -1 || wait_for_child(child, &status) == -1) {
         report_error();
     }
 
@@ -276,6 +326,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         char *arguments[MAX_ARGUMENTS];
+        const char *input_path;
         size_t argument_count;
 
         /* Flush the prompt before blocking for input, including when piped. */
@@ -330,7 +381,11 @@ int main(int argc, char **argv)
             continue;
         }
 
-        run_game(repository_path, arguments);
+        if (parse_redirection(arguments, argument_count, &input_path) == -1) {
+            report_error();
+            continue;
+        }
+        run_game(repository_path, arguments, input_path);
     }
 
     free(line);
