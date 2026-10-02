@@ -2,12 +2,14 @@
  * Date: 2026-10-02
  * Name and NetID: to be supplied by the author before submission.
  * Description: An interactive shell for a user-selected game repository.
- * Supports command input, exit, repository path changes, and game execution.
+ * Supports exit, path, sorted game listings, and game execution.
  */
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,11 +88,22 @@ static int wait_for_child(pid_t child, int *status)
     return waited == child ? 0 : -1;
 }
 
+/* Build a repository-relative executable path without a fixed-size buffer. */
+static char *join_repository_path(const char *repository_path, const char *name)
+{
+    size_t path_length = strlen(repository_path) + strlen(name) + 2;
+    char *game_path = malloc(path_length);
+
+    if (game_path != NULL) {
+        snprintf(game_path, path_length, "%s/%s", repository_path, name);
+    }
+    return game_path;
+}
+
 /* Run the named game from the current repository and wait for its completion. */
 static void run_game(const char *repository_path, char **arguments)
 {
-    size_t path_length = strlen(repository_path) + strlen(arguments[0]) + 2;
-    char *game_path = malloc(path_length);
+    char *game_path = join_repository_path(repository_path, arguments[0]);
     pid_t child;
     int status;
 
@@ -98,8 +111,6 @@ static void run_game(const char *repository_path, char **arguments)
         report_error();
         return;
     }
-    snprintf(game_path, path_length, "%s/%s", repository_path, arguments[0]);
-
     child = fork();
     if (child == -1) {
         report_error();
@@ -114,6 +125,126 @@ static void run_game(const char *repository_path, char **arguments)
 
     /* A game's own failure status is not a shell syntax or execution error. */
     free(game_path);
+}
+
+/* Hide only the directory's two navigation entries, keeping hidden files. */
+static int include_entry(const struct dirent *entry)
+{
+    return strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0;
+}
+
+static int compare_entries(const struct dirent **first, const struct dirent **second)
+{
+    return strcmp((*first)->d_name, (*second)->d_name);
+}
+
+/* Capture --help in a real temporary file; NULL selects the (empty) fallback. */
+static char *read_description(const char *game_path, char *game_name)
+{
+    FILE *capture = tmpfile();
+    char *description = NULL;
+    pid_t child;
+    int status;
+    long length;
+
+    if (capture == NULL) {
+        report_error();
+        return NULL;
+    }
+
+    child = fork();
+    if (child == -1) {
+        report_error();
+        goto cleanup;
+    }
+    if (child == 0) {
+        char *help_arguments[] = {game_name, "--help", NULL};
+        int null_descriptor = open("/dev/null", O_RDWR);
+
+        /* Help probes must neither read shell commands nor print diagnostics. */
+        if (null_descriptor == -1 ||
+            dup2(null_descriptor, STDIN_FILENO) == -1 ||
+            dup2(null_descriptor, STDERR_FILENO) == -1 ||
+            dup2(fileno(capture), STDOUT_FILENO) == -1) {
+            _exit(EXIT_FAILURE);
+        }
+        close(null_descriptor);
+        fclose(capture);
+        execvp(game_path, help_arguments);
+        _exit(EXIT_FAILURE);
+    }
+
+    if (wait_for_child(child, &status) == -1) {
+        report_error();
+        goto cleanup;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        goto cleanup;
+    }
+
+    /* Wait before sizing/reading the file, including descriptions larger than a pipe. */
+    if (fseek(capture, 0, SEEK_END) != 0 || (length = ftell(capture)) < 0) {
+        report_error();
+        goto cleanup;
+    }
+    if (length == 0) {
+        goto cleanup;
+    }
+    description = malloc((size_t)length + 1);
+    if (description == NULL) {
+        report_error();
+        goto cleanup;
+    }
+    if (fseek(capture, 0, SEEK_SET) != 0 ||
+        fread(description, 1, (size_t)length, capture) != (size_t)length) {
+        free(description);
+        description = NULL;
+        report_error();
+        goto cleanup;
+    }
+
+    /* Keep internal newlines but end each listing row with exactly one newline. */
+    while (length > 0 && description[length - 1] == '\n') {
+        --length;
+    }
+    description[length] = '\0';
+    if (length == 0) {
+        free(description);
+        description = NULL;
+    }
+
+cleanup:
+    fclose(capture);
+    return description;
+}
+
+/* List files in lexical order, releasing each scandir entry and help capture. */
+static void list_games(const char *repository_path)
+{
+    struct dirent **entries;
+    int count = scandir(repository_path, &entries, include_entry, compare_entries);
+
+    if (count == -1) {
+        report_error();
+        return;
+    }
+    for (int index = 0; index < count; ++index) {
+        char *game_path = join_repository_path(repository_path, entries[index]->d_name);
+        struct stat information;
+
+        if (game_path == NULL) {
+            report_error();
+        } else if (stat(game_path, &information) != 0 || !S_ISDIR(information.st_mode)) {
+            char *description = read_description(game_path, entries[index]->d_name);
+
+            printf("%s: %s\n", entries[index]->d_name,
+                   description != NULL ? description : "(empty)");
+            free(description);
+        }
+        free(game_path);
+        free(entries[index]);
+    }
+    free(entries);
 }
 
 int main(int argc, char **argv)
@@ -186,6 +317,15 @@ int main(int argc, char **argv)
             if (argument_count != 2 ||
                 change_repository(&repository_path, arguments[1]) != 0) {
                 report_error();
+            }
+            continue;
+        }
+
+        if (strcmp(arguments[0], "ls") == 0) {
+            if (argument_count != 1) {
+                report_error();
+            } else {
+                list_games(repository_path);
             }
             continue;
         }
